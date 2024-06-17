@@ -1,0 +1,2 @@
+envs/dev/1.general/_variables.tf
+envs/dev/2.api/_variables.tf
