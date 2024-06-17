@@ -1,0 +1,41 @@
+#Ignore secutiry check: https://aquasecurity.github.io/tfsec/v1.28.1/guides/configuration/ignores/
+name: Terraform Security Check
+on:
+  workflow_call:
+    inputs:
+      environment:
+        required: true
+        type: string
+
+permissions:
+  id-token: write
+  contents: read
+  issues: write
+  pull-requests: write
+
+env:
+  TF_VAR_pipeline: true
+
+jobs:
+  test:
+    name: TFSec
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      
+      - name: Init Environment
+        run: ./.github/workflows/init-environemnt.sh
+        env: 
+          DEPLOY_KEY: ${{ secrets.DEPLOY_KEY }}
+
+      - name: Install TFSec
+        run: |
+          curl -L https://github.com/aquasecurity/tfsec/releases/download/v1.28.6/tfsec-linux-amd64 -o /tmp/tfsec
+          chmod +x /tmp/tfsec
+          sudo mv /tmp/tfsec /usr/local/bin/tfsec
+          tfsec --version
+
+      - name: Run TFSec
+        working-directory: ./terraform
+        run: make tfsec_all e=${{ inputs.environment }}

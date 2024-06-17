@@ -1,0 +1,5 @@
+---
+exclude:
+  - aws-ec2-no-public-ingress-sgr
+  - aws-ec2-no-public-egress-sgr
+  - aws-s3-enable-versioning

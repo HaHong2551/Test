@@ -1,0 +1,247 @@
+name: Terraform Apply
+on:
+  workflow_call:
+    inputs:
+      environment:
+        required: true
+        type: string
+
+env:
+  TF_VAR_pipeline: true
+
+jobs:  
+  apply:
+    name: Applying Terraform - ${{ inputs.environment }}
+    environment: ${{ inputs.environment }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:     
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Init Environment
+        run: ./.github/workflows/init-environemnt.sh
+        env: 
+          DEPLOY_KEY: ${{ secrets.DEPLOY_KEY }}
+
+      - name: Install tfenv
+        run: |
+          git clone https://github.com/tfutils/tfenv.git ~/.tfenv
+          echo "$HOME/.tfenv/bin" >> $GITHUB_PATH
+
+      - id: auth
+        name: configure aws credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.ASSUME_ROLE_ARN }}
+          role-session-name: github-action
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Terraform Symlink
+        id: Symlink
+        working-directory: ./terraform
+        run: |
+          ls -la
+          make symlink_all e=${{ inputs.environment }}
+
+      - name: Terraform Init
+        id: init
+        working-directory: ./terraform
+        run: make init_all e=${{ inputs.environment }}
+
+      - name: Terraform Apply
+        id: apply
+        working-directory: ./terraform
+        run: make apply_cicd e=${{ inputs.environment }}
+
+      - name: Post to Slack with token
+        id: push_slack_token
+        if: ${{ (failure() && env.SLACK_BOT_TOKEN != '') || (success() && env.SLACK_BOT_TOKEN != '') }}
+        uses: slackapi/slack-github-action@v1.25.0
+        with:
+          # Unlike the step posting a new message, this step does not accept a channel name.
+          # Please use a channel ID, not a name here.
+          channel-id: ${{ secrets.SLACK_CHANNEL_ID }}
+          payload: |
+            {
+              "attachments": [
+                {
+                  "color": "${{ env.PULL_REQUEST_JOB_STATUS_COLOR }}",
+                  "fallback": "notify",
+                  "blocks": [
+                    {
+                      "type": "header",
+                      "text": {
+                        "type": "plain_text",
+                        "text": ":rocket: Notification for Terraform apply :rocket:"
+                      }
+                    },
+                    {
+                      "type": "section",
+                      "text": {
+                        "text": "*${{ inputs.environment }} environment *",
+                        "type": "mrkdwn"
+                      }
+                    },
+                    {
+                      "type": "divider"
+                    },
+                    {
+                      "type": "section",
+                      "fields": [
+                        {
+                          "type": "mrkdwn",
+                          "text": "- *Status*\n`${{ job.status }}`"
+                        },
+                        {
+                          "type": "mrkdwn",
+                          "text": "- *Github Action*\n`https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}`"
+                        },
+                        {
+                          "type": "mrkdwn",
+                          "text": "- *Author:*\n`${{ github.event.pull_request.user.login }}`"
+                        },
+                        {
+                          "type": "mrkdwn",
+                          "text": "- *Pull request title*:\n`${{ github.event.pull_request.title }}`"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "divider"
+                    },
+                    {
+                      "type": "actions",
+                      "elements": [
+                        {
+                          "type": "button",
+                          "text": {
+                            "type": "plain_text",
+                            "text": "Check PR"
+                          },
+                          "url": "${{ github.event.pull_request.html_url || github.event.head_commit.url }}"
+                        },
+                        {
+                          "type": "button",
+                          "text": {
+                            "type": "plain_text",
+                            "text": "Check Github Actions"
+                          },
+                          "url": "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "divider"
+                    },
+                    {
+                      "type": "section",
+                      "text": {
+                        "type": "mrkdwn",
+                        "text": "${{ env.SLACK_USER }} please check *${{ inputs.environment }}* environment!"
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_CHANNEL_ID: ${{ secrets.SLACK_CHANNEL_ID }}
+          SLACK_USER: ${{ secrets.SLACK_USER }}
+          PULL_REQUEST_JOB_STATUS_COLOR: ${{ job.status == 'success' && '33FF6B' || job.status == 'failure' && 'FF3633' || 'FFD433' }}
+
+      - name: Post to Slack with webhook
+        id: push_slack_webhook
+        if: ${{ (failure() && env.SLACK_WEBHOOK_URL != '') || (success() && env.SLACK_WEBHOOK_URL != '') }}
+        uses: slackapi/slack-github-action@v1.25.0
+        with:
+          # For posting a rich message using Block Kit
+          payload: |
+            {
+              "attachments": [
+                {
+                  "color": "${{ env.PULL_REQUEST_JOB_STATUS_COLOR }}",
+                  "fallback": "notify",
+                  "blocks": [
+                    {
+                      "type": "header",
+                      "text": {
+                        "type": "plain_text",
+                        "text": ":rocket: Notification for Terraform apply :rocket:"
+                      }
+                    },
+                    {
+                      "type": "section",
+                      "text": {
+                        "text": "*${{ inputs.environment }} environment *",
+                        "type": "mrkdwn"
+                      }
+                    },
+                    {
+                      "type": "divider"
+                    },
+                    {
+                      "type": "section",
+                      "fields": [
+                        {
+                          "type": "mrkdwn",
+                          "text": "- *Status*\n`${{ job.status }}`"
+                        },
+                        {
+                          "type": "mrkdwn",
+                          "text": "- *Github Action*\n`https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}`"
+                        },
+                        {
+                          "type": "mrkdwn",
+                          "text": "- *Author:*\n`${{ github.event.pull_request.user.login }}`"
+                        },
+                        {
+                          "type": "mrkdwn",
+                          "text": "- *Pull request title*:\n`${{ github.event.pull_request.title }}`"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "divider"
+                    },
+                    {
+                      "type": "actions",
+                      "elements": [
+                        {
+                          "type": "button",
+                          "text": {
+                            "type": "plain_text",
+                            "text": "Check PR"
+                          },
+                          "url": "${{ github.event.pull_request.html_url || github.event.head_commit.url }}"
+                        },
+                        {
+                          "type": "button",
+                          "text": {
+                            "type": "plain_text",
+                            "text": "Check Github Actions"
+                          },
+                          "url": "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "divider"
+                    },
+                    {
+                      "type": "section",
+                      "text": {
+                        "type": "mrkdwn",
+                        "text": "${{ env.SLACK_USER }} please check *${{ inputs.environment }}* environment!"
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
+          SLACK_USER: ${{ secrets.SLACK_USER }}
+          PULL_REQUEST_JOB_STATUS_COLOR: ${{ job.status == 'success' && '33FF6B' || job.status == 'failure' && 'FF3633' || 'FFD433' }}

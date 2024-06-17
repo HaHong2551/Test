@@ -1,0 +1,343 @@
+name: Terraform Plan
+on:
+  workflow_call:
+    inputs:
+      environment:
+        required: true
+        type: string
+
+permissions:
+  id-token: write
+  contents: read
+  issues: write
+  pull-requests: write
+
+env:
+  TF_VAR_pipeline: true
+
+jobs:  
+  plan:
+    name: Planning Terraform - ${{ inputs.environment }}
+    environment: ${{ inputs.environment }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:     
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Init Environment
+        run: ./.github/workflows/init-environemnt.sh
+        env: 
+          DEPLOY_KEY: ${{ secrets.DEPLOY_KEY }}
+
+      - name: Install tfenv
+        run: |
+          git clone https://github.com/tfutils/tfenv.git ~/.tfenv
+          echo "$HOME/.tfenv/bin" >> $GITHUB_PATH
+
+      - name: configure aws credentials
+        id: auth
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.ASSUME_ROLE_ARN }}
+          role-session-name: github-action
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Terraform Symlink
+        id: Symlink
+        working-directory: ./terraform
+        run: |
+          ls -la
+          make symlink_all e=${{ inputs.environment }}
+
+      - name: Terraform Init
+        id: init
+        working-directory: ./terraform
+        run: make init_all e=${{ inputs.environment }}
+
+      - name: Terraform Fmt
+        id: fmt
+        working-directory: ./terraform
+        run: make fmt_cicd e=${{ inputs.environment }}
+
+      - name: Terraform Validate
+        id: validate
+        working-directory: ./terraform
+        run: make validate_cicd e=${{ inputs.environment }}
+
+      - name: Install tflint
+        run: curl -s https://raw.githubusercontent.com/terraform-linters/tflint/master/install_linux.sh | sudo bash
+        env:
+          TFLINT_VERSION: v0.51.1
+      
+      - name: Git config
+        run: git config --global url."https://oauth2:$github_token@github.com/framgia/infra-iac-workflow.git".insteadOf "ssh://git@github.com/framgia/infra-iac-workflow.git"
+        env:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Add config TFLint
+        working-directory: ./terraform
+        run: make tflint_config_all e=${{ inputs.environment }}
+
+      - name: Init TFLint
+        working-directory: ./terraform
+        run: make tflint_init_all e=${{ inputs.environment }}
+
+
+      - name: Run TFLint
+        id: tflint
+        working-directory: ./terraform
+        run: make tflint_all e=${{ inputs.environment }}
+
+      - name: Terraform Plan  
+        id: plan
+        working-directory: ./terraform
+        shell: bash
+        run: |
+          make plan_cicd e=${{ inputs.environment }} | tee result.json
+          echo 'plan<<EOF' >> $GITHUB_OUTPUT
+          cat result.json >> $GITHUB_OUTPUT
+          echo 'EOF' >> $GITHUB_OUTPUT
+
+      - name: Output Terraform Plan - ${{ inputs.environment }}
+        uses: actions/github-script@v7
+        if: github.event_name == 'pull_request'
+        env:
+          PLAN: "terraform\n${{ steps.plan.outputs.plan }}"
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            // 1. Retrieve existing bot comments for the PR
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            })
+            const botComment = comments.find(comment => {
+              return comment.user.type === 'Bot' && comment.body.includes('Terraform - ${{ inputs.environment }}')
+            })
+
+            // 2. Prepare format of the comment
+            const output = `#### Terraform - ${{ inputs.environment }} 🖌
+            #### Terraform Initialization ⚙️\`${{ steps.init.outcome }}\`
+
+            #### Terraform Plan 📖\`${{ steps.plan.outcome }}\`
+
+            <details><summary>Show Plan</summary>
+
+            \`\`\`\n
+            ${process.env.PLAN}
+            \`\`\`
+
+            </details>
+
+            *Pusher: @${{ github.actor }}, Action: \`${{ github.event_name }}\`, Workflow: \`${{ github.workflow }}\`*`;
+
+            // 3. If we have a comment, update it, otherwise create a new one
+            if (botComment) {
+              github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body: output
+              })
+            } else {
+              github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: output
+              })
+            }
+     
+      - name: Post to Slack with token
+        id: push_slack_token
+        if: ${{ (failure() && env.SLACK_BOT_TOKEN != '') || (success() && env.SLACK_BOT_TOKEN != '') }}
+        uses: slackapi/slack-github-action@v1.25.0
+        with:
+          # Unlike the step posting a new message, this step does not accept a channel name.
+          # Please use a channel ID, not a name here.
+          channel-id: ${{ secrets.SLACK_CHANNEL_ID }}
+          payload: |
+            {
+              "attachments": [
+                {
+                  "color": "${{ env.PULL_REQUEST_JOB_STATUS_COLOR }}",
+                  "fallback": "notify",
+                  "blocks": [
+                    {
+                      "type": "header",
+                      "text": {
+                        "type": "plain_text",
+                        "text": ":rocket: Notification for Terraform plan :rocket:"
+                      }
+                    },
+                    {
+                      "type": "section",
+                      "text": {
+                        "text": "*${{ inputs.environment }} environment *",
+                        "type": "mrkdwn"
+                      }
+                    },
+                    {
+                      "type": "divider"
+                    },
+                    {
+                      "type": "section",
+                      "fields": [
+                        {
+                          "type": "mrkdwn",
+                          "text": "- *Status*\n`${{ job.status }}`"
+                        },
+                        {
+                          "type": "mrkdwn",
+                          "text": "- *Github Action*\n`https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}`"
+                        },
+                        {
+                          "type": "mrkdwn",
+                          "text": "- *Author:*\n`${{ github.event.pull_request.user.login }}`"
+                        },
+                        {
+                          "type": "mrkdwn",
+                          "text": "- *Pull request title*:\n`${{ github.event.pull_request.title }}`"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "divider"
+                    },
+                    {
+                      "type": "actions",
+                      "elements": [
+                        {
+                          "type": "button",
+                          "text": {
+                            "type": "plain_text",
+                            "text": "Check PR"
+                          },
+                          "url": "${{ github.event.pull_request.html_url || github.event.head_commit.url }}"
+                        },
+                        {
+                          "type": "button",
+                          "text": {
+                            "type": "plain_text",
+                            "text": "Check Github Actions"
+                          },
+                          "url": "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "divider"
+                    },
+                    {
+                      "type": "section",
+                      "text": {
+                        "type": "mrkdwn",
+                        "text": "${{ env.SLACK_USER }} please review!"
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_CHANNEL_ID: ${{ secrets.SLACK_CHANNEL_ID }}
+          SLACK_USER: ${{ secrets.SLACK_USER }}
+          PULL_REQUEST_JOB_STATUS_COLOR: ${{ job.status == 'success' && '33FF6B' || job.status == 'failure' && 'FF3633' || 'FFD433' }}
+
+      - name: Post to Slack with webhook
+        id: push_slack_webhook
+        if: ${{ (failure() && env.SLACK_WEBHOOK_URL != '') || (success() && env.SLACK_WEBHOOK_URL != '') }}
+        uses: slackapi/slack-github-action@v1.25.0
+        with:
+          # For posting a rich message using Block Kit
+          payload: |
+            {
+              "attachments": [
+                {
+                  "color": "${{ env.PULL_REQUEST_JOB_STATUS_COLOR }}",
+                  "fallback": "notify",
+                  "blocks": [
+                    {
+                      "type": "header",
+                      "text": {
+                        "type": "plain_text",
+                        "text": ":rocket: Notification for Terraform plan :rocket:"
+                      }
+                    },
+                    {
+                      "type": "section",
+                      "text": {
+                        "text": "*${{ inputs.environment }} environment *",
+                        "type": "mrkdwn"
+                      }
+                    },
+                    {
+                      "type": "divider"
+                    },
+                    {
+                      "type": "section",
+                      "fields": [
+                        {
+                          "type": "mrkdwn",
+                          "text": "- *Status*\n`${{ job.status }}`"
+                        },
+                        {
+                          "type": "mrkdwn",
+                          "text": "- *Github Action*\n`https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}`"
+                        },
+                        {
+                          "type": "mrkdwn",
+                          "text": "- *Author:*\n`${{ github.event.pull_request.user.login }}`"
+                        },
+                        {
+                          "type": "mrkdwn",
+                          "text": "- *Pull request title*:\n`${{ github.event.pull_request.title }}`"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "divider"
+                    },
+                    {
+                      "type": "actions",
+                      "elements": [
+                        {
+                          "type": "button",
+                          "text": {
+                            "type": "plain_text",
+                            "text": "Check PR"
+                          },
+                          "url": "${{ github.event.pull_request.html_url || github.event.head_commit.url }}"
+                        },
+                        {
+                          "type": "button",
+                          "text": {
+                            "type": "plain_text",
+                            "text": "Check Github Actions"
+                          },
+                          "url": "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "divider"
+                    },
+                    {
+                      "type": "section",
+                      "text": {
+                        "type": "mrkdwn",
+                        "text": "${{ env.SLACK_USER }} please review!"
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
+          SLACK_USER: ${{ secrets.SLACK_USER }}
+          PULL_REQUEST_JOB_STATUS_COLOR: ${{ job.status == 'success' && '33FF6B' || job.status == 'failure' && 'FF3633' || 'FFD433' }}
