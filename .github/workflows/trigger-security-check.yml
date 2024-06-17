@@ -1,0 +1,50 @@
+name: Run Terraform Plan and Request Approval
+on: [push]
+
+permissions:
+  id-token: write
+  contents: write
+  pull-requests: write
+  issues: write
+
+
+jobs:
+  change:
+    name: Get Environment
+    runs-on: ubuntu-latest
+    outputs:
+      TF_ENV: ${{ steps.trigger_env.outputs.tf_env }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Filter Folder 
+        uses: dorny/paths-filter@v3
+        id: changes
+        with: 
+          filters: |
+            dev:
+              - 'terraform/envs/dev/**'
+            stg:
+              - 'terraform/envs/stg/**'
+            prd:
+              - 'terraform/envs/prd/**'
+      - if: steps.changes.outputs.dev == 'true' || steps.changes.outputs.stg == 'true' || steps.changes.outputs.prd == 'true'
+        id: trigger_env
+        run: |
+          env=$(echo $raw_outputs | grep -Eo [a-z]{3})
+          echo "tf_env=$env" >> "$GITHUB_OUTPUT"
+          echo "tf_env=$env"
+        env:
+          raw_outputs: ${{ steps.changes.outputs.changes }}
+
+      - name: Cancel Workflow if Environment Not Detected
+        if: steps.trigger_env.outputs.tf_env == ''
+        run: exit 1
+
+  tfsec_check:
+    name: Terraform Security Check - Develop
+    needs: change
+    uses: ./.github/workflows/sec.yml
+    with:
+      environment: ${{needs.change.outputs.TF_ENV}}
+    secrets: inherit
+

@@ -1,0 +1,37 @@
+###################
+# General Initialization
+###################
+terraform {
+  required_version = ">= 0.13"
+
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = ">= 3.37"
+    }
+    template = "~> 2.0"
+    sops = {
+      source  = "carlpett/sops"
+      version = "~>0.7.1"
+    }
+  }
+  backend "s3" {
+    profile = "internal-dev"
+    bucket  = "infra-iac-workflow"
+    key     = "general/terraform.dev.tfstate"
+    region  = "ap-northeast-1"
+  }
+}
+
+# Configure the AWS Provider
+provider "aws" {
+  profile = var.pipeline == true ? null : "${var.project}-${var.env}"
+  region  = var.region
+  default_tags {
+    tags = {
+      Project     = var.project
+      Environment = var.env
+    }
+  }
+}
+data "aws_caller_identity" "current" {}
