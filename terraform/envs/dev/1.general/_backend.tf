@@ -16,8 +16,8 @@ terraform {
     }
   }
   backend "s3" {
-    profile = "internal-dev"
-    bucket  = "infra-iac-workflow"
+    profile = "ecs-demo-dev"
+    bucket  = "iac-terraform-demo1"
     key     = "general/terraform.dev.tfstate"
     region  = "ap-northeast-1"
   }
