@@ -25,7 +25,7 @@ terraform {
 
 # Configure the AWS Provider
 provider "aws" {
-  profile = var.pipeline == true ? null : "${var.project}-${var.env}"
+  profile = var.pipeline == true ? null : "ecs-demo-dev"
   region  = var.region
   default_tags {
     tags = {
