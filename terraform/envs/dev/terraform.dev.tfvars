@@ -1,3 +1,3 @@
-project = "ecs-demo"
+project = "internal"
 env     = "dev"
 region  = "ap-northeast-1"
