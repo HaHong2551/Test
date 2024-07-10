@@ -36,6 +36,6 @@ jobs:
           sudo mv /tmp/tfsec /usr/local/bin/tfsec
           tfsec --version
 
-      # - name: Run TFSec
-      #   working-directory: ./terraform
-      #   run: make tfsec_all e=${{ inputs.environment }}
+      - name: Run TFSec
+        working-directory: ./terraform
+        run: make tfsec_all e=${{ inputs.environment }}
