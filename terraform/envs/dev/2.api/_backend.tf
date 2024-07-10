@@ -16,8 +16,8 @@ terraform {
     }
   }
   backend "s3" {
-    profile = "ecs-demo-dev"
-    bucket  = "iac-terraform-demo1"
+    profile = "internal-dev"
+    bucket  = "infra-iac-workflow"
     key     = "api/terraform.dev.tfstate"
     region  = "ap-northeast-1"
   }
@@ -25,7 +25,7 @@ terraform {
 
 # Configure the AWS Provider
 provider "aws" {
-  profile = var.pipeline == true ? null : "ecs-demo-dev"
+  profile = var.pipeline == true ? null : "${var.project}-${var.env}"
   region  = var.region
   default_tags {
     tags = {
@@ -34,4 +34,4 @@ provider "aws" {
     }
   }
 }
-# data "aws_caller_identity" "current" {}
+data "aws_caller_identity" "current" {}

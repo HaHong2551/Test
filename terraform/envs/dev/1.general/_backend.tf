@@ -16,8 +16,8 @@ terraform {
     }
   }
   backend "s3" {
-    profile = "ecs-demo-dev"
-    bucket  = "iac-terraform-demo1"
+    profile = "internal-dev"
+    bucket  = "infra-iac-workflow"
     key     = "general/terraform.dev.tfstate"
     region  = "ap-northeast-1"
   }
@@ -34,4 +34,4 @@ provider "aws" {
     }
   }
 }
-# data "aws_caller_identity" "current" {}
+data "aws_caller_identity" "current" {}
